@@ -1,0 +1,21 @@
+[package]
+name = "term-render"
+version = "0.1.0"
+edition = "2024"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+strip = "symbols"
+
+[dependencies]
+anyhow = "~1.0"
+clap = { version = "~4.5", features = ["cargo", "derive", "env", "unicode", "wrap_help"] }
+crossterm = "~0.29"
+directories = "~6.0"
+fontconfig = "~0.10"
+image = { version = "~0.25", features = ["serde"] }
+rayon = "~1.10"
+serde = { version = "~1.0", features = ["derive"] }
+serde_json = { version = "~1.0", features = ["arbitrary_precision", "float_roundtrip"] }
+swash = { version = "~0.2", features = ["scale"] }
