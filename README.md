@@ -55,6 +55,11 @@ It's recommended (but not required) to set the `--font` argument
 to your terminal's configured font so that the rendered image uses
 more accurate character brightness values.
 
+The first invocation with each font may be slightly slower
+than expected due to the program needing to calculate the
+brightness of each rendered character.
+Subsequent runs should be much faster due to caching.
+
 ## License
 
 term-render is free software:
