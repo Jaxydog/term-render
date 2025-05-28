@@ -29,6 +29,7 @@ use directories::ProjectDirs;
 use fontconfig::Fontconfig;
 use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView, LumaA, Pixel, Rgba};
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelBridge, ParallelIterator};
 use swash::FontRef;
 use swash::scale::{Render, ScaleContext, Source, StrikeWith};
 
@@ -150,37 +151,47 @@ fn compute_brightnesses(font_family: &str) -> Result<HashMap<char, u16>> {
     let font_data = std::fs::read(&font.path)?;
     let font_ref = FontRef::from_index(&font_data, 0).expect("invalid font file");
 
-    let mut context = SCALE_CONTEXT.lock().unwrap();
-    let mut bitmaps = HashMap::new();
     let mut render = Render::new(&[Source::ColorOutline(0), Source::ColorBitmap(StrikeWith::BestFit), Source::Outline]);
 
     render.default_color([0xFF; 4]);
 
-    for character in (CHARACTER_RANGE.0 ..= CHARACTER_RANGE.1).filter(|c| !c.is_whitespace() && !c.is_control()) {
-        let glyph_id = font_ref.charmap().map(character);
-        let mut glyph_scaler = context.builder(font_ref).build();
-        let Some(image) = render.render(&mut glyph_scaler, glyph_id) else { continue };
+    let bitmaps: HashMap<char, (u32, u32, Box<[u8]>)> = (CHARACTER_RANGE.0 ..= CHARACTER_RANGE.1)
+        .into_par_iter()
+        .filter(|character| !character.is_whitespace() && !character.is_control())
+        .filter_map(|character| {
+            let mut context = SCALE_CONTEXT.lock().unwrap();
+            let mut glyph_scaler = context.builder(font_ref).build();
 
-        bitmaps.insert(character, (image.placement.width, image.placement.height, image.data.into_boxed_slice()));
-    }
+            let image = render.render(&mut glyph_scaler, font_ref.charmap().map(character))?;
 
-    let maximum_width = bitmaps.values().map(|(w, ..)| *w).max().unwrap_or(0);
-    let maximum_height = bitmaps.values().map(|(_, h, _)| *h).max().unwrap_or(0);
+            drop(context);
+
+            Some((character, (image.placement.width, image.placement.height, image.data.into_boxed_slice())))
+        })
+        .collect();
+
+    let maximum_width = bitmaps.values().map(|(width, ..)| *width).max().unwrap_or(0);
+    let maximum_height = bitmaps.values().map(|(_, height, _)| *height).max().unwrap_or(0);
     let pixels_per_cell = maximum_width as u64 * maximum_height as u64;
-    let mut brightnesses = HashMap::new();
 
     if pixels_per_cell == 0 {
-        return Ok(brightnesses);
+        return Ok(HashMap::new());
     }
 
-    for (character, bitmap_pixels) in bitmaps.iter().map(|(c, (.., b))| (c, b.array_chunks::<4>().copied())) {
-        let brightness = bitmap_pixels
-            .map(|c| Rgba(c).to_luma_alpha())
-            .fold(0, |brightness, LumaA([luma, alpha])| brightness + (luma as u64 * alpha as u64));
+    let brightnesses_iterator = bitmaps.par_iter().map(|(character, (.., bitmap))| {
+        let brightness = bitmap
+            .array_chunks::<4>()
+            .par_bridge()
+            .copied()
+            .map(|pixel| Rgba(pixel).to_luma_alpha())
+            .fold_with(0, |brightness, LumaA([luma, alpha])| brightness + (luma as u64 * alpha as u64))
+            .sum::<u64>()
+            / pixels_per_cell;
 
-        brightnesses.insert(*character, (brightness / pixels_per_cell) as u16);
-    }
+        (*character, brightness as u16)
+    });
 
+    let mut brightnesses: HashMap<char, u16> = brightnesses_iterator.collect();
     let brightness_scale = brightnesses.values().max().copied().unwrap_or(0) as f64 / MAX_BRIGHTNESS as f64;
 
     brightnesses.values_mut().for_each(|value| *value = ((*value) as f64 / brightness_scale) as u16);
