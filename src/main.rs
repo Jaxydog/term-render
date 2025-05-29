@@ -100,16 +100,17 @@ fn draw_ascii_image(
     terminal_size: (u16, u16),
     use_color: bool,
 ) -> Result<()> {
-    let large_image = source_image.resize(terminal_size.0 as u32 * 2, terminal_size.1 as u32 * 2, FilterType::Triangle);
-    let final_image = large_image.resize_exact(large_image.width(), large_image.height() / 2, FilterType::Triangle);
+    let scaled_image = source_image
+        .resize_exact(source_image.width() * 2, source_image.height(), FilterType::Triangle)
+        .resize(terminal_size.0 as u32, terminal_size.1 as u32, FilterType::Triangle);
 
     crossterm::queue!(stdout, Clear(ClearType::All))?;
 
-    for pixel_y in 0 .. final_image.height() {
+    for pixel_y in 0 .. scaled_image.height() {
         crossterm::queue!(stdout, MoveToRow(pixel_y as u16))?;
 
-        for (pixel_x, pixel) in (0 .. final_image.width())
-            .map(|pixel_x| (pixel_x, final_image.get_pixel(pixel_x, pixel_y)))
+        for (pixel_x, pixel) in (0 .. scaled_image.width())
+            .map(|pixel_x| (pixel_x, scaled_image.get_pixel(pixel_x, pixel_y)))
             .filter(|(_, pixel)| pixel.0[3] > 0)
         {
             let LumaA([luma, alpha]) = pixel.to_luma_alpha();
